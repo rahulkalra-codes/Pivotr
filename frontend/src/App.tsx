@@ -180,11 +180,7 @@ export default function App() {
         background: '#fff', borderBottom: '1px solid #e2e8f0',
         padding: '0 24px', position: 'sticky', top: 0, zIndex: 100,
       }}>
-        <div style={{
-          maxWidth: 1200, margin: '0 auto',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          height: '60px',
-        }}>
+        <div className="header-inner">
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{
               width: 32, height: 32, background: '#6366f1', borderRadius: '8px',
@@ -201,7 +197,7 @@ export default function App() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div className="header-controls">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#64748b' }}>
               <span style={{ fontWeight: 500 }}>{user.email}</span>
               <button
@@ -218,7 +214,7 @@ export default function App() {
 
             <div style={{ width: '1px', height: '20px', background: '#e2e8f0' }} />
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#94a3b8' }}>
+            <div className="header-timer">
               <Clock size={13} />
               <span>Refreshes in {fmtCountdown(nextRefreshIn)}</span>
             </div>
@@ -265,7 +261,7 @@ export default function App() {
       </header>
 
       {/* Main */}
-      <main style={{ maxWidth: 1200, margin: '0 auto', padding: '28px 24px' }}>
+      <main className="main-content">
 
         {scrapeMsg && (
           <div style={{
