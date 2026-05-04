@@ -7,6 +7,7 @@ import JobCard from './components/JobCard'
 import StatsBar from './components/StatsBar'
 import AddJobModal from './components/AddJobModal'
 import ResumeUpload from './components/ResumeUpload'
+import LinkedInCookieSettings from './components/LinkedInCookieSettings'
 
 const AUTO_REFRESH_MS = 30 * 60 * 1000 // 30 min
 
@@ -19,6 +20,7 @@ export default function App() {
   const [scraping, setScraping] = useState(false)
   const [scrapeMsg, setScrapeMsg] = useState('')
   const [showAdd, setShowAdd] = useState(false)
+  const [sortBy, setSortBy] = useState<'date' | 'match'>('date')
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
   const [nextRefreshIn, setNextRefreshIn] = useState(AUTO_REFRESH_MS / 1000)
 
@@ -140,8 +142,11 @@ export default function App() {
               <Zap size={18} color="#fff" />
             </div>
             <div>
-              <h1 style={{ fontSize: '16px', fontWeight: 700, lineHeight: 1 }}>Job Tracker</h1>
-              <p style={{ fontSize: '11px', color: '#94a3b8', lineHeight: 1.2 }}>PM Jobs · India</p>
+              <h1 style={{ fontSize: '16px', fontWeight: 700, lineHeight: 1 }}>Pivotr</h1>
+              <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: 1.2, height: '14px', overflow: 'hidden', position: 'relative' }}>
+                <span style={{ animation: 'tagline1 8s ease-in-out infinite', position: 'absolute' }}>Stop juggling tabs. Start landing jobs.</span>
+                <span style={{ animation: 'tagline2 8s ease-in-out infinite', position: 'absolute' }}>Hunt smarter, not harder.</span>
+              </div>
             </div>
           </div>
 
@@ -212,15 +217,40 @@ export default function App() {
           onUpdate={r => { setResume(r); fetchAll() }}
         />
 
+        <LinkedInCookieSettings />
+
         <FilterBar
           filters={filters}
           onChange={partial => setFilters(f => ({ ...f, ...partial }))}
         />
 
         {lastRefreshed && (
-          <p style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '14px' }}>
-            Last refreshed: {lastRefreshed.toLocaleTimeString()} · {jobs.length} job{jobs.length !== 1 ? 's' : ''} shown
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+            <p style={{ fontSize: '12px', color: '#94a3b8', margin: 0 }}>
+              Last refreshed: {lastRefreshed.toLocaleTimeString()} · {jobs.length} job{jobs.length !== 1 ? 's' : ''} shown
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '12px', color: '#94a3b8' }}>Sort:</span>
+              <button
+                onClick={() => setSortBy('date')}
+                style={{
+                  padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: 500,
+                  border: `1px solid ${sortBy === 'date' ? '#6366f1' : '#e2e8f0'}`,
+                  background: sortBy === 'date' ? '#6366f1' : '#fff',
+                  color: sortBy === 'date' ? '#fff' : '#475569', cursor: 'pointer',
+                }}
+              >Latest</button>
+              <button
+                onClick={() => setSortBy('match')}
+                style={{
+                  padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: 500,
+                  border: `1px solid ${sortBy === 'match' ? '#6366f1' : '#e2e8f0'}`,
+                  background: sortBy === 'match' ? '#6366f1' : '#fff',
+                  color: sortBy === 'match' ? '#fff' : '#475569', cursor: 'pointer',
+                }}
+              >% Match</button>
+            </div>
+          </div>
         )}
 
         {loading ? (
@@ -239,7 +269,11 @@ export default function App() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {jobs.map(job => (
+            {[...jobs].sort((a, b) =>
+              sortBy === 'match'
+                ? (b.relevance_score ?? 0) - (a.relevance_score ?? 0)
+                : 0
+            ).map(job => (
               <JobCard
                 key={job.id}
                 job={job}
@@ -261,6 +295,8 @@ export default function App() {
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes tagline1 { 0%,40% { opacity:1 } 50%,90% { opacity:0 } 100% { opacity:1 } }
+        @keyframes tagline2 { 0%,40% { opacity:0 } 50%,90% { opacity:1 } 100% { opacity:0 } }
         .bg-slate-100 { background: #f1f5f9; }
         .text-slate-700 { color: #334155; }
         .border-slate-200 { border-color: #e2e8f0; }

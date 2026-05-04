@@ -25,7 +25,20 @@ Base.metadata.create_all(bind=engine)
 
 scheduler = BackgroundScheduler()
 RESUME_CACHE_PATH = "resume_cache.json"
+SETTINGS_PATH = "settings.json"
 SCRAPE_STATUS: dict = {"running": False, "last_result": None}
+
+
+def _load_settings() -> dict:
+    if os.path.exists(SETTINGS_PATH):
+        with open(SETTINGS_PATH) as f:
+            return json.load(f)
+    return {}
+
+
+def _save_settings(data: dict):
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(data, f)
 
 
 def _load_resume_cache() -> dict:
@@ -79,7 +92,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="Job Tracker API", lifespan=lifespan)
+app = FastAPI(title="Pivotr API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -123,6 +136,11 @@ def list_jobs(
             Job.title.ilike(f"%{search}%") | Job.company.ilike(f"%{search}%")
         )
     jobs = q.order_by(Job.scraped_at.desc()).all()
+
+    # Fix double-slash URLs left by earlier scraper versions
+    for job in jobs:
+        if job.url and job.url.endswith("//"):
+            job.url = job.url.rstrip("/")
 
     # Attach relevance score if resume is uploaded
     resume = _load_resume_cache()
@@ -254,6 +272,31 @@ def scrape_status():
         "running": SCRAPE_STATUS["running"],
         "last_result": SCRAPE_STATUS["last_result"],
     }
+
+
+# ─── LinkedIn Cookie ──────────────────────────────────────────────────────────
+
+@app.post("/api/settings/linkedin-cookie")
+def set_linkedin_cookie(body: dict):
+    settings = _load_settings()
+    cookie = body.get("cookie", "").strip()
+    settings["linkedin_cookie"] = cookie
+    _save_settings(settings)
+    return {"status": "saved", "set": bool(cookie)}
+
+
+@app.get("/api/settings/linkedin-cookie")
+def get_linkedin_cookie():
+    settings = _load_settings()
+    cookie = settings.get("linkedin_cookie", "")
+    return {"set": bool(cookie), "preview": cookie[:12] + "..." if cookie else ""}
+
+
+@app.delete("/api/settings/linkedin-cookie", status_code=204)
+def delete_linkedin_cookie():
+    settings = _load_settings()
+    settings.pop("linkedin_cookie", None)
+    _save_settings(settings)
 
 
 # ─── Stats ────────────────────────────────────────────────────────────────────

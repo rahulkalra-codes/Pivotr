@@ -74,9 +74,13 @@ def _normalize_location(raw: str) -> str:
 
 _PAGES_PER_CITY = 5   # 5 pages × 25 results = 125 per city × 5 cities = 625 jobs
 
-def scrape_linkedin_city(city: str, location_param: str, session: requests.Session, query: str = "Product Manager") -> list[dict]:
+def scrape_linkedin_city(city: str, location_param: str, session: requests.Session, query: str = "Product Manager", li_at: Optional[str] = None) -> list[dict]:
     jobs: list[dict] = []
     seen_ids: set = set()
+
+    headers = dict(HEADERS)
+    if li_at:
+        headers["Cookie"] = f"li_at={li_at}"
 
     for page in range(_PAGES_PER_CITY):
         start = page * 25
@@ -89,7 +93,7 @@ def scrape_linkedin_city(city: str, location_param: str, session: requests.Sessi
             f"&f_TPR=r2592000"
         )
         try:
-            resp = session.get(url, headers=HEADERS, timeout=20)
+            resp = session.get(url, headers=headers, timeout=20)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
             cards = soup.select("div.base-card")
@@ -138,11 +142,11 @@ def scrape_linkedin_city(city: str, location_param: str, session: requests.Sessi
     return jobs
 
 
-def scrape_linkedin_all(query: str = "Product Manager") -> list[dict]:
+def scrape_linkedin_all(query: str = "Product Manager", li_at: Optional[str] = None) -> list[dict]:
     all_jobs: list[dict] = []
     session = _make_session()
     for city, location_param in LINKEDIN_CITIES.items():
-        all_jobs.extend(scrape_linkedin_city(city, location_param, session, query))
+        all_jobs.extend(scrape_linkedin_city(city, location_param, session, query, li_at=li_at))
         time.sleep(random.uniform(1, 2))
     return all_jobs
 
@@ -184,17 +188,33 @@ def scrape_remotive(query: str = "product manager") -> list[dict]:
 
 # ─── Master runner ─────────────────────────────────────────────────────────────
 
+def _load_linkedin_cookies() -> Optional[str]:
+    """Return the full LinkedIn cookie string (may contain li_at, bcookie, JSESSIONID, etc.)"""
+    import json, os
+    settings_path = os.path.join(os.path.dirname(__file__), "settings.json")
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path) as f:
+                return json.load(f).get("linkedin_cookie") or None
+        except Exception:
+            pass
+    return None
+
+
 def run_all_scrapers(query: str = "Product Manager") -> list[dict]:
-    from scraper_playwright import scrape_indeed as pw_indeed, scrape_google_careers
+    from scraper_playwright import scrape_indeed as pw_indeed, scrape_google_careers, scrape_linkedin_authenticated
 
     all_jobs: list[dict] = []
-    li_slug = query.lower().replace(" ", "-")
+    li_cookies = _load_linkedin_cookies()
+    if li_cookies:
+        logger.info("LinkedIn: using authenticated scraper (full cookie string present)")
+    else:
+        logger.info("LinkedIn: running unauthenticated scraper (paste full cookie string for more results)")
 
-    # LinkedIn runs via HTTP (fast). Indeed + Google Careers use Playwright (headless).
-    # All three run in parallel — total wall time ≈ slowest single source (~30s).
     with ThreadPoolExecutor(max_workers=3) as pool:
+        linkedin_fn = (lambda q: scrape_linkedin_authenticated(q, li_cookies)) if li_cookies else scrape_linkedin_all
         futures = {
-            pool.submit(scrape_linkedin_all, li_slug): "linkedin",
+            pool.submit(linkedin_fn, query):           "linkedin",
             pool.submit(pw_indeed, query):             "indeed",
             pool.submit(scrape_google_careers, query): "google_careers",
         }

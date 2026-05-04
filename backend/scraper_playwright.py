@@ -272,7 +272,158 @@ def scrape_google_careers(query: str = "Product Manager") -> list[dict]:
     return jobs
 
 
-# ─── 4. Foundit (Monster India) ───────────────────────────────────────────────
+# ─── 4. LinkedIn Authenticated (Playwright + li_at cookie) ───────────────────
+
+# Company IDs for targeted searches — catches roles that don't surface in general search
+_TARGET_COMPANY_IDS = {
+    "Microsoft": "1035",
+    "Amazon":    "1586",
+    "Stripe":    "3594946",
+    "Intuit":    "2253",
+    "PayPal":    "2690",
+    "LinkedIn":  "1337",
+    "Flipkart":  "717687",
+    "Razorpay":  "4174751",
+    "PhonePe":   "15564184",
+}
+
+
+def scrape_linkedin_authenticated(query: str = "Product Manager", cookie_string: str = "") -> list[dict]:
+    """
+    LinkedIn Voyager API scraper using the full browser cookie string.
+    Step 1: Search endpoint → job IDs + titles (paginated, up to 200 jobs)
+    Step 2: Detail endpoint (concurrent) → company name + location + apply URL
+    """
+    import requests as _requests
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Parse cookies and CSRF
+    cookies = _requests.cookies.RequestsCookieJar()
+    for part in cookie_string.split(";"):
+        part = part.strip()
+        if "=" in part:
+            k, v = part.split("=", 1)
+            cookies.set(k.strip(), v.strip().strip('"'))
+    csrf = cookies.get("JSESSIONID", "").strip('"')
+
+    session = _requests.Session()
+    session.cookies = cookies
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "csrf-token": csrf,
+        "X-Restli-Protocol-Version": "2.0.0",
+        "Accept": "application/vnd.linkedin.normalized+json+2.1",
+        "X-Li-Lang": "en_US",
+        "Referer": "https://www.linkedin.com/jobs/search/",
+    })
+
+    SEARCH_URL = "https://www.linkedin.com/voyager/api/voyagerJobsDashJobCards"
+    DETAIL_URL = "https://www.linkedin.com/voyager/api/jobs/jobPostings/{job_id}"
+
+    # ── Step 1: collect job IDs + titles from search ──────────────────────────
+    raw_jobs: list[dict] = []   # {job_id, title}
+    seen_ids: set = set()
+
+    for start in range(0, 200, 25):
+        try:
+            # Build URL manually — LinkedIn rejects URL-encoded parentheses/commas
+            kw = query.replace(" ", "+")
+            q_str = (
+                f"(origin:JOB_SEARCH_PAGE_QUERY_EXPANSION,"
+                f"keywords:{kw},"
+                f"locationFallback:India,"
+                f"selectedFilters:(timePostedRange:List(r2592000)),"
+                f"spellCorrectionEnabled:true)"
+            )
+            full_url = (
+                f"{SEARCH_URL}"
+                f"?decorationId=com.linkedin.voyager.dash.deco.jobs.search.JobSearchCardsCollection-174"
+                f"&count=25"
+                f"&q=jobSearch"
+                f"&query={q_str}"
+                f"&start={start}"
+            )
+            resp = session.get(full_url, timeout=15, allow_redirects=False)
+            if resp.status_code != 200:
+                logger.warning(f"LinkedIn search: {resp.status_code} at start={start}")
+                break
+            included = resp.json().get("included", [])
+            found = 0
+            for inc in included:
+                if not inc.get("$type", "").endswith(".JobPosting"):
+                    continue
+                title = inc.get("title", "").strip()
+                urn = inc.get("entityUrn", "") or inc.get("trackingUrn", "")
+                job_id = urn.split(":")[-1]
+                if not title or job_id in seen_ids:
+                    continue
+                seen_ids.add(job_id)
+                raw_jobs.append({"job_id": job_id, "title": title})
+                found += 1
+            if found == 0:
+                break
+            time.sleep(random.uniform(0.3, 0.6))
+        except Exception as e:
+            logger.error(f"LinkedIn search error at start={start}: {e}")
+            break
+
+    logger.info(f"LinkedIn search: {len(raw_jobs)} job IDs collected")
+    if not raw_jobs:
+        return []
+
+    # ── Step 2: fetch company + location concurrently ─────────────────────────
+    def fetch_detail(item: dict) -> Optional[dict]:
+        job_id = item["job_id"]
+        try:
+            r = session.get(
+                DETAIL_URL.format(job_id=job_id),
+                params={"decorationId": "com.linkedin.voyager.deco.jobs.web.shared.WebFullJobPosting-65"},
+                timeout=10,
+                allow_redirects=False,
+            )
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            raw = data.get("data", {})
+            included = data.get("included", [])
+            company = next(
+                (x.get("name") for x in included if x.get("$type", "").endswith(".Company") and x.get("name")),
+                "Unknown"
+            )
+            location = raw.get("formattedLocation", "") or "India"
+            job_url = raw.get("jobPostingUrl", f"https://www.linkedin.com/jobs/view/{job_id}").split("?")[0].rstrip("/")
+            return {
+                "title":       item["title"],
+                "company":     company,
+                "location":    _norm_loc(location),
+                "source":      "linkedin",
+                "url":         job_url,
+                "description": "",
+                "salary":      "",
+                "experience":  "",
+                "posted_date": "",
+                "external_id": _ext_id("linkedin", job_url),
+            }
+        except Exception as e:
+            logger.debug(f"LinkedIn detail error {job_id}: {e}")
+            return None
+
+    jobs: list[dict] = []
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        futures = {pool.submit(fetch_detail, item): item for item in raw_jobs}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                jobs.append(result)
+
+    logger.info(f"LinkedIn authenticated (Voyager API): {len(jobs)} jobs")
+    return jobs
+
+
+# ─── 5. Foundit (Monster India) ───────────────────────────────────────────────
 
 _FOUNDIT_LOCATIONS = ["Bangalore", "Mumbai", "Delhi", "Hyderabad", "Pune"]
 

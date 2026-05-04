@@ -63,4 +63,17 @@ export const api = {
     },
     delete: (): Promise<void> => req('/resume', { method: 'DELETE' }),
   },
+
+  linkedin: {
+    getCookie: (): Promise<{ set: boolean; preview: string }> =>
+      req('/settings/linkedin-cookie'),
+    setCookie: (cookie: string): Promise<{ status: string; set: boolean }> =>
+      req('/settings/linkedin-cookie', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookie }),
+      }),
+    deleteCookie: (): Promise<void> =>
+      req('/settings/linkedin-cookie', { method: 'DELETE' }),
+  },
 }

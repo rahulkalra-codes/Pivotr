@@ -107,37 +107,59 @@ def parse_resume_text(text: str) -> dict:
 def score_job(job: dict, resume: dict) -> int:
     """
     Returns 0–100 relevance score for a job given parsed resume data.
-    Higher = more relevant.
+    Scores based on: title relevance (30), seniority match (40), skill overlap (30).
     """
-    score = 50  # baseline
-
-    # Title match
+    score = 0
     title_lower = job.get("title", "").lower()
+    yoe = resume.get("years_experience") or 0
+
+    # ── Title relevance (0–30) ────────────────────────────────────────────────
     if "product manager" in title_lower:
-        score += 20
+        score += 30
+    elif "product" in title_lower and any(w in title_lower for w in ["lead", "head", "director", "vp", "owner"]):
+        score += 25
     elif "product" in title_lower:
+        score += 15
+
+    # ── Seniority match with YoE (0–40) ──────────────────────────────────────
+    # Determine seniority tier of the job
+    if any(w in title_lower for w in ["vp ", "vice president", "head of product"]):
+        job_tier = 5        # 12+ YoE
+    elif any(w in title_lower for w in ["director", "group product"]):
+        job_tier = 4        # 8–12 YoE
+    elif any(w in title_lower for w in ["senior", "staff", "principal", "lead"]):
+        job_tier = 3        # 5–8 YoE
+    elif any(w in title_lower for w in ["product manager", "product owner"]) and \
+         not any(w in title_lower for w in ["associate", "junior", "entry"]):
+        job_tier = 2        # 2–5 YoE
+    else:
+        job_tier = 1        # 0–2 YoE (associate/junior)
+
+    # Map user YoE to tier
+    if yoe >= 12:
+        user_tier = 5
+    elif yoe >= 8:
+        user_tier = 4
+    elif yoe >= 5:
+        user_tier = 3
+    elif yoe >= 2:
+        user_tier = 2
+    else:
+        user_tier = 1
+
+    tier_diff = abs(job_tier - user_tier)
+    if tier_diff == 0:
+        score += 40
+    elif tier_diff == 1:
+        score += 25
+    elif tier_diff == 2:
         score += 10
+    # tier_diff >= 3: no seniority points (very mismatched)
 
-    # Experience level match
-    yoe = resume.get("years_experience")
-    exp_text = job.get("experience", "").lower()
-    if yoe is not None and exp_text:
-        # Extract required years from job experience field
-        exp_match = re.search(r"(\d+)\s*(?:-\s*(\d+))?\s*(?:years?|yrs?)", exp_text)
-        if exp_match:
-            min_exp = int(exp_match.group(1))
-            max_exp = int(exp_match.group(2)) if exp_match.group(2) else min_exp + 4
-            if min_exp <= yoe <= max_exp:
-                score += 20
-            elif yoe < min_exp:
-                score -= 15
-            elif yoe > max_exp + 3:
-                score -= 5
-
-    # Skill overlap
+    # ── Skill overlap in title + description (0–30) ───────────────────────────
     resume_skills = set(resume.get("skills", []))
-    desc_lower = (job.get("description", "") + " " + job.get("title", "")).lower()
-    skill_hits = sum(1 for s in resume_skills if s in desc_lower)
-    score += min(skill_hits * 3, 15)
+    text_lower = (job.get("description", "") + " " + job.get("title", "")).lower()
+    skill_hits = sum(1 for s in resume_skills if s in text_lower)
+    score += min(skill_hits * 5, 30)
 
     return max(0, min(100, score))
