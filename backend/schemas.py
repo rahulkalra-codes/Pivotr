@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import datetime
 from models import JobStatus
@@ -50,3 +50,28 @@ class ScrapeResult(BaseModel):
     skipped: int
     errors: int
     message: str
+
+
+class UserCreate(BaseModel):
+    email: str
+    password: str  # min 6 chars
+
+    @field_validator("password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError("Password must be at least 6 characters")
+        return v
+
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+
+    model_config = {"from_attributes": True}
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse

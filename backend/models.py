@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, ForeignKey
 from sqlalchemy.sql import func
 import enum
 from database import Base
@@ -10,6 +10,15 @@ class JobStatus(str, enum.Enum):
     INTERVIEWING = "Interviewing"
     OFFER = "Offer"
     REJECTED = "Rejected"
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
 
 
 class Job(Base):
@@ -29,4 +38,5 @@ class Job(Base):
     posted_date = Column(String(100))
     scraped_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-    external_id = Column(String(255), unique=True)  # dedup key
+    external_id = Column(String(255), index=True)  # dedup key, per-user (no longer globally unique)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)

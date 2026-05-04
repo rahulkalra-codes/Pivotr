@@ -2,8 +2,40 @@ import type { Filters, Job, JobStatus, ResumeInfo, ScrapeResult, Stats } from '.
 
 const BASE = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api'
 
+const TOKEN_KEY = 'pivotr_token'
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY)
+}
+
+export function setToken(t: string): void {
+  localStorage.setItem(TOKEN_KEY, t)
+}
+
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY)
+}
+
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(BASE + path, options)
+  const token = getToken()
+  const authHeaders: Record<string, string> = token
+    ? { Authorization: `Bearer ${token}` }
+    : {}
+
+  // Merge caller headers with auth headers (caller headers take precedence for everything except Authorization)
+  const mergedHeaders: Record<string, string> = {
+    ...authHeaders,
+    ...(options?.headers as Record<string, string> | undefined),
+  }
+
+  const res = await fetch(BASE + path, { ...options, headers: mergedHeaders })
+
+  if (res.status === 401) {
+    clearToken()
+    window.dispatchEvent(new Event('auth:logout'))
+    throw new Error('401: Unauthorized')
+  }
+
   if (!res.ok) {
     const text = await res.text()
     throw new Error(`${res.status}: ${text}`)
@@ -75,5 +107,22 @@ export const api = {
       }),
     deleteCookie: (): Promise<void> =>
       req('/settings/linkedin-cookie', { method: 'DELETE' }),
+  },
+
+  auth: {
+    register: (email: string, password: string) =>
+      req('/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      }),
+    login: (email: string, password: string) =>
+      req('/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      }),
+    me: () => req('/auth/me'),
+    logout: () => { clearToken() },
   },
 }

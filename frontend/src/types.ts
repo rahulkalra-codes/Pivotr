@@ -1,3 +1,8 @@
+export interface User {
+  id: number
+  email: string
+}
+
 export type JobStatus = 'Wishlist' | 'Applied' | 'Interviewing' | 'Offer' | 'Rejected'
 
 export interface Job {

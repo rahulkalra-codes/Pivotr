@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, Plus, Loader2, Zap, Clock } from 'lucide-react'
-import { api } from './api'
-import type { Filters, Job, JobStatus, ResumeInfo, Stats } from './types'
+import { api, getToken, setToken, clearToken } from './api'
+import type { Filters, Job, JobStatus, ResumeInfo, Stats, User } from './types'
 import FilterBar from './components/FilterBar'
 import JobCard from './components/JobCard'
 import StatsBar from './components/StatsBar'
 import AddJobModal from './components/AddJobModal'
 import ResumeUpload from './components/ResumeUpload'
 import LinkedInCookieSettings from './components/LinkedInCookieSettings'
+import AuthPage from './components/AuthPage'
 
 const AUTO_REFRESH_MS = 30 * 60 * 1000 // 30 min
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
   const [jobs, setJobs] = useState<Job[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
   const [resume, setResume] = useState<ResumeInfo | null>(null)
@@ -26,6 +29,31 @@ export default function App() {
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // On mount: validate existing token
+  useEffect(() => {
+    const token = getToken()
+    if (token) {
+      api.auth.me()
+        .then((result) => {
+          setUser(result as User)
+          setAuthChecked(true)
+        })
+        .catch(() => {
+          clearToken()
+          setAuthChecked(true)
+        })
+    } else {
+      setAuthChecked(true)
+    }
+  }, [])
+
+  // Listen for auth:logout events (fired by req() on 401)
+  useEffect(() => {
+    const handler = () => setUser(null)
+    window.addEventListener('auth:logout', handler)
+    return () => window.removeEventListener('auth:logout', handler)
+  }, [])
 
   const fetchAll = useCallback(async () => {
     try {
@@ -122,6 +150,29 @@ export default function App() {
     return `${m}:${String(s).padStart(2, '0')}`
   }
 
+  // Show loading spinner while checking auth
+  if (!authChecked) {
+    return (
+      <div style={{
+        minHeight: '100vh', background: '#f8fafc',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Loader2 size={32} color="#6366f1" style={{ animation: 'spin 1s linear infinite' }} />
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      </div>
+    )
+  }
+
+  // Show auth page if not logged in
+  if (!user) {
+    return (
+      <AuthPage onAuth={(token, u) => {
+        setToken(token)
+        setUser(u)
+      }} />
+    )
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
       {/* Header */}
@@ -151,6 +202,22 @@ export default function App() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#64748b' }}>
+              <span style={{ fontWeight: 500 }}>{user.email}</span>
+              <button
+                onClick={() => { api.auth.logout(); setUser(null) }}
+                style={{
+                  padding: '5px 12px', border: '1px solid #e2e8f0',
+                  borderRadius: '7px', background: '#fff', color: '#475569',
+                  fontSize: '12px', fontWeight: 500, cursor: 'pointer',
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+
+            <div style={{ width: '1px', height: '20px', background: '#e2e8f0' }} />
+
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#94a3b8' }}>
               <Clock size={13} />
               <span>Refreshes in {fmtCountdown(nextRefreshIn)}</span>

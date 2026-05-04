@@ -6,16 +6,16 @@ import threading
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 import models
+from auth import create_access_token, get_current_user, hash_password, verify_password
 from database import Base, SessionLocal, engine, get_db
-from models import Job, JobStatus
+from models import Job, JobStatus, User
 from resume_parser import parse_resume_text, score_job
-from schemas import JobCreate, JobResponse, JobUpdate, ScrapeResult
+from schemas import JobCreate, JobResponse, JobUpdate, ScrapeResult, TokenResponse, UserCreate, UserResponse
 from scraper import run_all_scrapers
 
 logging.basicConfig(level=logging.INFO)
@@ -23,47 +23,58 @@ logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
 
-scheduler = BackgroundScheduler()
-RESUME_CACHE_PATH = "resume_cache.json"
-SETTINGS_PATH = "settings.json"
 SCRAPE_STATUS: dict = {"running": False, "last_result": None}
 
 
-def _load_settings() -> dict:
-    if os.path.exists(SETTINGS_PATH):
-        with open(SETTINGS_PATH) as f:
+def _settings_path(user_id: int) -> str:
+    return f"settings_{user_id}.json"
+
+
+def _resume_cache_path(user_id: int) -> str:
+    return f"resume_cache_{user_id}.json"
+
+
+def _load_settings(user_id: int) -> dict:
+    path = _settings_path(user_id)
+    if os.path.exists(path):
+        with open(path) as f:
             return json.load(f)
     return {}
 
 
-def _save_settings(data: dict):
-    with open(SETTINGS_PATH, "w") as f:
+def _save_settings(user_id: int, data: dict):
+    with open(_settings_path(user_id), "w") as f:
         json.dump(data, f)
 
 
-def _load_resume_cache() -> dict:
-    if os.path.exists(RESUME_CACHE_PATH):
-        with open(RESUME_CACHE_PATH) as f:
+def _load_resume_cache(user_id: int) -> dict:
+    path = _resume_cache_path(user_id)
+    if os.path.exists(path):
+        with open(path) as f:
             return json.load(f)
     return {}
 
 
-def _save_resume_cache(data: dict):
-    with open(RESUME_CACHE_PATH, "w") as f:
+def _save_resume_cache(user_id: int, data: dict):
+    with open(_resume_cache_path(user_id), "w") as f:
         json.dump(data, f)
 
 
-def save_scraped_jobs(jobs: list[dict]) -> dict:
+def save_scraped_jobs(jobs: list[dict], user_id: int) -> dict:
     db = SessionLocal()
     added = skipped = errors = 0
     try:
         for job_data in jobs:
             ext_id = job_data.get("external_id")
-            if ext_id and db.query(Job).filter(Job.external_id == ext_id).first():
+            if ext_id and db.query(Job).filter(
+                Job.external_id == ext_id, Job.user_id == user_id
+            ).first():
                 skipped += 1
                 continue
             try:
-                job = Job(**{k: v for k, v in job_data.items() if hasattr(Job, k)})
+                filtered = {k: v for k, v in job_data.items() if hasattr(Job, k)}
+                filtered["user_id"] = user_id
+                job = Job(**filtered)
                 db.add(job)
                 db.commit()
                 added += 1
@@ -76,20 +87,11 @@ def save_scraped_jobs(jobs: list[dict]) -> dict:
     return {"added": added, "skipped": skipped, "errors": errors}
 
 
-def scheduled_scrape():
-    logger.info("Running scheduled scrape...")
-    jobs = run_all_scrapers()
-    result = save_scraped_jobs(jobs)
-    logger.info(f"Scrape done: {result}")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scheduler.add_job(scheduled_scrape, "cron", hour=8, minute=0, id="daily_scrape")
-    scheduler.start()
-    logger.info("Scheduler started — daily scrape at 08:00")
+    # Scheduled scrape is disabled — no global user context available
+    logger.info("Pivotr API started (scheduled scrape disabled in multi-user mode)")
     yield
-    scheduler.shutdown()
 
 
 app = FastAPI(title="Pivotr API", lifespan=lifespan)
@@ -108,6 +110,43 @@ app.add_middleware(
 )
 
 
+# ─── Auth ─────────────────────────────────────────────────────────────────────
+
+@app.post("/api/auth/register", response_model=TokenResponse, status_code=201)
+def register(body: UserCreate, db: Session = Depends(get_db)):
+    existing = db.query(User).filter(User.email == body.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user = User(email=body.email, hashed_password=hash_password(body.password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    token = create_access_token(user.id)
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        user=UserResponse(id=user.id, email=user.email),
+    )
+
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+def login(body: UserCreate, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == body.email).first()
+    if not user or not verify_password(body.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_access_token(user.id)
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        user=UserResponse(id=user.id, email=user.email),
+    )
+
+
+@app.get("/api/auth/me", response_model=UserResponse)
+def me(current_user: User = Depends(get_current_user)):
+    return UserResponse(id=current_user.id, email=current_user.email)
+
+
 # ─── Jobs ──────────────────────────────────────────────────────────────────────
 
 @app.get("/api/jobs", response_model=list[JobResponse])
@@ -118,8 +157,9 @@ def list_jobs(
     source: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    q = db.query(Job)
+    q = db.query(Job).filter(Job.user_id == current_user.id)
     if status:
         q = q.filter(Job.status == status)
     if company:
@@ -148,7 +188,7 @@ def list_jobs(
             job.url = job.url.rstrip("/")
 
     # Attach relevance score if resume is uploaded
-    resume = _load_resume_cache()
+    resume = _load_resume_cache(current_user.id)
     if resume:
         for job in jobs:
             job.relevance_score = score_job(
@@ -160,8 +200,12 @@ def list_jobs(
 
 
 @app.post("/api/jobs", response_model=JobResponse, status_code=201)
-def create_job(job: JobCreate, db: Session = Depends(get_db)):
-    db_job = Job(**job.model_dump(exclude_unset=True))
+def create_job(
+    job: JobCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    db_job = Job(**job.model_dump(exclude_unset=True), user_id=current_user.id)
     db.add(db_job)
     db.commit()
     db.refresh(db_job)
@@ -169,16 +213,25 @@ def create_job(job: JobCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobResponse)
-def get_job(job_id: int, db: Session = Depends(get_db)):
-    job = db.query(Job).filter(Job.id == job_id).first()
+def get_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    job = db.query(Job).filter(Job.id == job_id, Job.user_id == current_user.id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 
 
 @app.patch("/api/jobs/{job_id}", response_model=JobResponse)
-def update_job(job_id: int, updates: JobUpdate, db: Session = Depends(get_db)):
-    job = db.query(Job).filter(Job.id == job_id).first()
+def update_job(
+    job_id: int,
+    updates: JobUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    job = db.query(Job).filter(Job.id == job_id, Job.user_id == current_user.id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     for field, value in updates.model_dump(exclude_unset=True).items():
@@ -189,8 +242,12 @@ def update_job(job_id: int, updates: JobUpdate, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/jobs/{job_id}", status_code=204)
-def delete_job(job_id: int, db: Session = Depends(get_db)):
-    job = db.query(Job).filter(Job.id == job_id).first()
+def delete_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    job = db.query(Job).filter(Job.id == job_id, Job.user_id == current_user.id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     db.delete(job)
@@ -200,7 +257,10 @@ def delete_job(job_id: int, db: Session = Depends(get_db)):
 # ─── Resume ────────────────────────────────────────────────────────────────────
 
 @app.post("/api/resume")
-async def upload_resume(file: UploadFile = File(...)):
+async def upload_resume(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
     content = await file.read()
 
     if file.filename and file.filename.lower().endswith(".pdf"):
@@ -215,7 +275,7 @@ async def upload_resume(file: UploadFile = File(...)):
         text = content.decode("utf-8", errors="ignore")
 
     parsed = parse_resume_text(text)
-    _save_resume_cache(parsed)
+    _save_resume_cache(current_user.id, parsed)
 
     return {
         "message": "Resume uploaded and parsed successfully",
@@ -227,27 +287,28 @@ async def upload_resume(file: UploadFile = File(...)):
 
 
 @app.get("/api/resume")
-def get_resume():
-    resume = _load_resume_cache()
+def get_resume(current_user: User = Depends(get_current_user)):
+    resume = _load_resume_cache(current_user.id)
     if not resume:
         return {"uploaded": False}
     return {"uploaded": True, **resume}
 
 
 @app.delete("/api/resume", status_code=204)
-def delete_resume():
-    if os.path.exists(RESUME_CACHE_PATH):
-        os.remove(RESUME_CACHE_PATH)
+def delete_resume(current_user: User = Depends(get_current_user)):
+    path = _resume_cache_path(current_user.id)
+    if os.path.exists(path):
+        os.remove(path)
 
 
 # ─── Scraping ─────────────────────────────────────────────────────────────────
 
-def _do_scrape_background():
+def _do_scrape_background(user_id: int):
     SCRAPE_STATUS["running"] = True
     SCRAPE_STATUS["last_result"] = None
     try:
         jobs = run_all_scrapers()
-        result = save_scraped_jobs(jobs)
+        result = save_scraped_jobs(jobs, user_id)
         SCRAPE_STATUS["last_result"] = {
             "added": result["added"],
             "skipped": result["skipped"],
@@ -263,10 +324,10 @@ def _do_scrape_background():
 
 
 @app.post("/api/scrape")
-def trigger_scrape():
+def trigger_scrape(current_user: User = Depends(get_current_user)):
     if SCRAPE_STATUS["running"]:
         return {"status": "running", "message": "Scrape already in progress…"}
-    thread = threading.Thread(target=_do_scrape_background, daemon=True)
+    thread = threading.Thread(target=_do_scrape_background, args=(current_user.id,), daemon=True)
     thread.start()
     return {"status": "started", "message": "Scraping started in background — results update automatically."}
 
@@ -282,46 +343,55 @@ def scrape_status():
 # ─── LinkedIn Cookie ──────────────────────────────────────────────────────────
 
 @app.post("/api/settings/linkedin-cookie")
-def set_linkedin_cookie(body: dict):
-    settings = _load_settings()
+def set_linkedin_cookie(
+    body: dict,
+    current_user: User = Depends(get_current_user),
+):
+    settings = _load_settings(current_user.id)
     cookie = body.get("cookie", "").strip()
     settings["linkedin_cookie"] = cookie
-    _save_settings(settings)
+    _save_settings(current_user.id, settings)
     return {"status": "saved", "set": bool(cookie)}
 
 
 @app.get("/api/settings/linkedin-cookie")
-def get_linkedin_cookie():
-    settings = _load_settings()
+def get_linkedin_cookie(current_user: User = Depends(get_current_user)):
+    settings = _load_settings(current_user.id)
     cookie = settings.get("linkedin_cookie", "")
     return {"set": bool(cookie), "preview": cookie[:12] + "..." if cookie else ""}
 
 
 @app.delete("/api/settings/linkedin-cookie", status_code=204)
-def delete_linkedin_cookie():
-    settings = _load_settings()
+def delete_linkedin_cookie(current_user: User = Depends(get_current_user)):
+    settings = _load_settings(current_user.id)
     settings.pop("linkedin_cookie", None)
-    _save_settings(settings)
+    _save_settings(current_user.id, settings)
 
 
 # ─── Stats ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/stats")
-def get_stats(db: Session = Depends(get_db)):
-    total = db.query(Job).count()
+def get_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    base_q = db.query(Job).filter(Job.user_id == current_user.id)
+    total = base_q.count()
     by_status = {
-        s.value: db.query(Job).filter(Job.status == s.value).count()
+        s.value: base_q.filter(Job.status == s.value).count()
         for s in JobStatus
     }
     return {
         "total": total,
         "by_status": by_status,
         "sources": {
-            src: db.query(Job).filter(Job.source == src).count()
+            src: base_q.filter(Job.source == src).count()
             for src in ["linkedin", "indeed", "google_careers", "manual"]
         },
     }
 
+
+# ─── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
 def health():

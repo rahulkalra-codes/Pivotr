@@ -12,3 +12,5 @@ fake-useragent==1.5.1
 pypdf==4.3.1
 python-multipart==0.0.12
 linkedin-api
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
