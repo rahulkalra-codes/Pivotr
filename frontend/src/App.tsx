@@ -143,9 +143,9 @@ export default function App() {
             </div>
             <div>
               <h1 style={{ fontSize: '16px', fontWeight: 700, lineHeight: 1 }}>Pivotr</h1>
-              <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: 1.2, height: '14px', overflow: 'hidden', position: 'relative' }}>
-                <span style={{ animation: 'tagline1 8s ease-in-out infinite', position: 'absolute' }}>Stop juggling tabs. Start landing jobs.</span>
-                <span style={{ animation: 'tagline2 8s ease-in-out infinite', position: 'absolute' }}>Hunt smarter, not harder.</span>
+              <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: 1.4 }}>
+                <div>Stop juggling tabs. Start landing jobs.</div>
+                <div>Hunt smarter, not harder.</div>
               </div>
             </div>
           </div>
