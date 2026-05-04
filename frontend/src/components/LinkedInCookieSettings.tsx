@@ -79,7 +79,7 @@ export default function LinkedInCookieSettings() {
             <button onClick={() => setShowInput(true)} style={{
               display: 'flex', alignItems: 'center', gap: '5px',
               padding: '7px 14px', border: 'none',
-              borderRadius: '8px', background: '#0a66c2', color: '#fff',
+              borderRadius: '8px', background: '#6366f1', color: '#fff',
               fontSize: '13px', fontWeight: 600,
             }}>
               <Key size={14} /> {cookieSet ? 'Update Cookie' : 'Set Cookie'}
