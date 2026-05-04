@@ -18,7 +18,7 @@ export default function ResumeUpload({ resume, onUpdate }: Props) {
     setError('')
     try {
       const result = await api.resume.upload(file)
-      onUpdate({ uploaded: true, ...result })
+      onUpdate(result)
     } catch (e) {
       setError(String(e))
     } finally {
