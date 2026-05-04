@@ -16,7 +16,11 @@ import time
 import random
 from typing import Optional
 
-from playwright.sync_api import sync_playwright, Page, Browser, TimeoutError as PWTimeout
+try:
+    from playwright.sync_api import sync_playwright, Page, Browser, TimeoutError as PWTimeout
+    _PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    _PLAYWRIGHT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +130,8 @@ def _scrape_naukri_page(page: Page, query: str, location: str) -> list[dict]:
 
 
 def scrape_naukri(query: str = "Product Manager") -> list[dict]:
+    if not _PLAYWRIGHT_AVAILABLE:
+        return []
     all_jobs: list[dict] = []
     with sync_playwright() as pw:
         browser = _new_browser(pw)
@@ -194,6 +200,8 @@ def _scrape_indeed_page(page: Page, query: str, location: str) -> list[dict]:
 
 
 def scrape_indeed(query: str = "Product Manager") -> list[dict]:
+    if not _PLAYWRIGHT_AVAILABLE:
+        return []
     all_jobs: list[dict] = []
     with sync_playwright() as pw:
         browser = _new_browser(pw)
@@ -214,6 +222,8 @@ def scrape_google_careers(query: str = "Product Manager") -> list[dict]:
     Scrapes careers.google.com — catches roles like the Google Pay / Google Play
     PM jobs that don't appear on LinkedIn.
     """
+    if not _PLAYWRIGHT_AVAILABLE:
+        return []
     jobs: list[dict] = []
     url = (
         f"https://www.google.com/about/careers/applications/jobs/results/"
@@ -429,6 +439,8 @@ _FOUNDIT_LOCATIONS = ["Bangalore", "Mumbai", "Delhi", "Hyderabad", "Pune"]
 
 
 def scrape_foundit(query: str = "Product Manager") -> list[dict]:
+    if not _PLAYWRIGHT_AVAILABLE:
+        return []
     all_jobs: list[dict] = []
 
     with sync_playwright() as pw:
