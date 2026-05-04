@@ -1,6 +1,6 @@
 import type { Filters, Job, JobStatus, ResumeInfo, ScrapeResult, Stats } from './types'
 
-const BASE = '/api'
+const BASE = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api'
 
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, options)
